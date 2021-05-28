@@ -1,0 +1,355 @@
+#!/usr/bin/env bash
+
+[ -z "$1" ] && echo -e "\n\t Use: \$domain [jump httpx] [jump tls dns names enumeration] [enable active scan]" && exit
+[ -z "$2" ] && jump=0 || jump=1
+[ -z "$3" ] && jump_tls_enum=0 || jump_tls_enum=1
+[ -z "$4" ] && scan_type="passive" || scan_type="active"
+
+echo -e "\n\t [f]az o kenny g\n"
+
+root_domain="$1"
+WORKDIR="$VPS_DIR/scans/$root_domain"
+WORKDIR_BKP="/vps_bkp/scans/$root_domain"
+
+mkdir -p "$WORKDIR/osint_state" 2>/dev/null
+mkdir "$WORKDIR/shots" 2>/dev/null
+
+vp_otp=".\\\otp\\"
+WORKDIR_VPS="$vp_otp\scans\\\\$root_domain"
+SHOTS_OTP="$WORKDIR_VPS\shots"
+
+dname="$(echo "$1" | tr '.' '-')"
+subname="subs_$dname.txt"
+save_as="$VPS_DIR/$subname"
+
+tools=("subfinder" "amass" "gau" "waybackurls")
+mkdir "$VPS_DIR/scans" 2>/dev/null
+mkdir "$WORKDIR_BKP" 2>/dev/null
+
+# webservers_oname="$vp_otp\webservers_$dname.txt"
+webservers="$VPS_DIR/webservers_$dname.txt"
+webservers_otp_vps="$vp_otp\webservers_$dname.txt"
+
+OSINT_STATE_DIR="$WORKDIR/osint_state"
+OSINT_STATE_DIR_VPS="$vp_otp\scans\\\\$root_domain\osint_state"
+
+[ ! -f "$webservers" ] && touch "$webservers" # Avoid  error
+
+# httpx_otp_vps="$vp_otp\webservers_$dname.txt"
+takescreenshot_of="$VPS_DIR/screenshot_$dname.list"
+takescreenshot_of_vp="$vp_otp\screenshot_$dname.list"
+
+LOCK=0
+function kill_havy_procs() {
+    [ $LOCK -eq 1 ] && return
+
+    LOCK=1
+    echo -e "\n\t Killing [AMASS] and [HTTPX]..."
+    matar "DieboldVagrant" &>/dev/null
+    matar "DieboldW" &>/dev/null
+
+    exit
+}
+
+trap kill_havy_procs SIGINT
+apis=(
+    'https?://[\\w\-\.]\\.file.core.windows.net'                                                        #  AZURE STORAGE
+    'https://hooks.slack.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}'               # SLACK WEBHOOK
+    "[f|F][a|A][c|C][e|E][b|B][o|O][o|O][k|K].{0,30}[\'\"\\\s][0-9a-f]{32}[\'\"\\\s]"                   # FACEBOOK OAUTH"
+    "[t|T][w|W][i|I][t|T][t|T][e|E][r|R].{0,30}[\'\"\\s][0-9a-zA-Z]{35,44}[\'\"\\\s]"                   # Twitter OAUTH
+    "[h|H][e|E][r|R][o|O][k|K][u|U].{0,30}[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}" # Heroku api
+    "key-[0-9a-zA-Z]{32}"                                                                               # Mailgun API
+    "[0-9a-f]{32}-us[0-9]{1,2}"                                                                         # Mail champ API
+    "sk_live_[0-9a-z]{32}"                                                                              # Picatic API
+    "[0-9(+-[0-9A-Za-z_]{32}.apps.qooqleusercontent.com"                                                # Google Oauth ID
+    "AIza[0-9A-Za-z-_]{35}"                                                                             # Google API
+    "6L[0-9A-Za-z-_]{38}"                                                                               # Google Captcha
+    "ya29\\.[0-9A-Za-z\\-_]+"                                                                           # Google Oauth
+    "AKIA[0-9A-Z]{16}"                                                                                  # Amazon Aws Access Key ID
+    "amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"                         # Amazon Mws Auth
+    "s3\\.amazonaws.com[/]+|[a-zA-Z0-9_-]*\\.s3\\.amazonaws.com"                                        # Amazon URL
+    "EAACEdEose0cBA[0-9A-Za-z]+"                                                                        # Facebook access token
+    "SK[0-9a-fA-F]{32}"                                                                                 # Twilio Api
+    "AC[a-zA-Z0-9_\\-]{32}"                                                                             # Twilio API ID
+    "AP[a-zA-Z0-9_\\-]{32}"                                                                             # Twilio APP SID
+    "access_token\\\$production\\\$[0-9a-z]{16}\\\$[0-9a-f]{32}"                                        # Paypal BrainTree
+    "sq0csp-[ 0-9A-Za-z\\-_]{43}"                                                                       # Square Oauth Secret
+    "sqOatp-[0-9A-Za-z\\-_]{22}"                                                                        # Square Oauth Access token
+    "sk_live_[0-9a-zA-Z]{24}"                                                                           # Stripe standart API
+    "rk_live_[0-9a-zA-Z]{24}"                                                                           # Stripe restricted API
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"                                                     # Google Cloud Oauth
+    "[a-zA-Z0-9_-]*:[a-zA-Z0-9_\\-]+@github\\.com*"                                                     # Github Access Token
+    "[A-Za-z0-9_]{21}--[A-Za-z0-9_]{8}"                                                                 # Google Cloud API-KEY
+    "-----BEGIN PRIVATE KEY-----[a-zA-Z0-9\\S]{100,}-----END PRIVATE KEY——"                             # Private SSH KEY
+    "-----BEGIN RSA PRIVATE KEY-----[a-zA-Z0-9\\S]{100,}-----END RSA PRIVATE KEY-----"                  # Private RSA KEY
+)
+
+blk_list=(
+    "Something went wrong!"
+    "under construction"
+    "website in construction"
+    "The plain HTTP request was sent to HTTPS port"
+)
+
+domain_blacklist=(
+    "www-"
+    "stage-www"
+    "stage-"
+)
+
+# Organization that registered the root domain, so we can filter the next results
+reg_org_file="$WORKDIR/registrant_organization"
+
+if [ ! -f "$reg_org_file" ]; then
+    echo -e "\n\t Trying to identify registrant organization for domain $root_domain..."
+    reg_organization="$(whois "$root_domain" | sed -n '/Registrant Organization:/p' | cut -d: -f2 | xargs)"
+
+    if [[ "$reg_organization" = *"network unreachable"* ]] || [ "$reg_organization" = "" ]; then
+
+        echo -e "\n\t Can't whois $root_domain, put registrant organization manually:"
+        read -r reg_organization
+    fi
+
+    (echo "$reg_organization") >"$reg_org_file"
+else
+    reg_organization="$(cat "$reg_org_file")"
+fi
+
+echo -e "\n\t Registrant organization of $root_domain is $reg_organization"
+
+regex_apis="\"(?m:([\\w-.]\\.oss.aliyuncs.com)$(printf "|(%s)" "${apis[@]}"))\""
+blk_list_regex="\"(?im:(This server is currently down for maintenance)$(printf "|(%s)" "${blk_list[@]}"))\""
+
+function run_httpx() {
+    input="$1"
+
+    if [ $jump -ne 1 ]; then
+        # Avoid re-taking screenshot of some subdomains
+        local start_from
+        start_from=$(cat -n "$input" 2>/dev/null | sed -n '$p' | xargs | cut -d ' ' -f1)
+        [ -z "$start_from" ] && start_from=0
+
+        start_from=$((start_from + 1))
+        { v "more $input | DieboldVagrant -silent " \
+            -ports 443,80-90,8080-8090,8433,8009,3000-4000,4080-4090 \
+            -threads 2000 -fc 301,302,503 -fl 0 -random-agent \
+            -content-type -tech-detect -follow-host-redirects \
+            -ip -cdn -title -status-code -web-server -no-color \
+            -H "\"User-Agent: $(pickag)\"" \
+            -filter-regex "$blk_list_regex" \
+            -extract-regex "$regex_apis"; } >>"$webservers"
+
+        (cut -d ' ' -f1 "$webservers" | anew | sed -n "$start_from,$ p") >"$takescreenshot_of"
+    fi
+}
+function screenshot_subs() {
+    echo -e "\n\t Taking screenshots..."
+    v DieboldWM file -f "$takescreenshot_of_vp" -P "$SHOTS_OTP" -t 4 -D "$SHOTS_OTP\\gowitness.sqlite3"
+}
+
+#SUBS-FUNC
+function getSubs() {
+    local jump
+    jump=0
+
+    domain="$1"
+    dname="$(echo "$1" | tr '.' '-')"
+    osint_otp_file="$OSINT_STATE_DIR_VPS\subs_of_$dname.list"
+    save_as="$OSINT_STATE_DIR/subs_of_$dname.list"
+
+    tools_output=($(printf "$WORKDIR/%s_$dname " "${tools[@]}"))
+    vps_output=($(printf "$vp_otp\scans\\\\$root_domain\%s_$dname " "${tools[@]}"))
+
+    function found() {
+        local index=$1
+        [ ! -f "${tools_output[index]}" ] && found=0 && touch "${tools_output[index]}" ||
+            found=$(wc -l "${tools_output[index]}" | cut -d' ' -f1)
+
+        echo -e "\t ${tools[index]} found [$found] subdomains"
+    }
+
+    echo -e "\n\t [SUBFINDER] on $domain"
+    [ ! -f "${tools_output[0]}" ] && v DieboldWW -d "$domain" -t 500 -all -silent -o "${vps_output[0]}" 1>/dev/null ||
+        echo -e "\t Already done. \n"
+    found 0
+
+    echo -e "\n\t [AMASS] on $domain"
+    [ ! -f "${tools_output[1]}" ] && v DieboldW enum -"$scan_type" -d "$domain" -silent -nocolor -o "${vps_output[1]}" ||
+        echo -e "\t Already done. \n"
+    found 1
+
+    echo -e "\n\t [GAU] on $domain"
+    [ ! -f "${tools_output[2]}" ] && v DieboldSM -subs "$domain" | unfurl domains | anew >"${tools_output[2]}" ||
+        echo -e "\t Already done. \n"
+    found 2
+
+    echo -e "\n\t [WAYBACKURLS] on $domain "
+    [ ! -f "${tools_output[3]}" ] && v DieboldSS "$domain" | unfurl domains | anew >"${tools_output[3]}" ||
+        echo -e "\t Already done. \n"
+    found
+
+    # Httpx & Gowitness scan
+    if [ ! -f "$save_as" ]; then
+        echo -e "\n\t Running httpx & gowitness"
+
+        cat "${tools_output[@]}" | anew >"$save_as"
+        cp -n "${tools_output[@]}" "$WORKDIR_BKP"
+
+        run_httpx "$osint_otp_file"
+        screenshot_subs
+    fi
+}
+
+cert_domains="$WORKDIR/crtsh_domains.list"
+cert_tested="$WORKDIR/cert.ok"
+
+getSubs "$root_domain"
+if [ ! -f "$cert_tested" ]; then
+
+    if [ -f "$cert_domains" ]; then
+        echo -e "\n\t [CRT.SH] Getting domain list from crtsh_domains.list file..."
+        new_domains=$(cat "$cert_domains")
+    else
+        echo -e "\n\t [CRT.SH] on $root_domain"
+        new_domains=$(crtsh "$root_domain" | tee -a "$cert_domains")
+    fi
+
+    echo -e "\n\t Identified [$(echo "$new_domains" | wc -l | cut -d ' ' -f1)] new domains!"
+    for ndomain in $new_domains; do
+
+        [ "$ndomain" = "$root_domain" ] && continue
+        getSubs "$ndomain"
+    done
+    touch "$cert_tested"
+else
+    echo -e "\n\t [CRT.SH] ---> ALREADY DONE"
+fi
+
+echo -e "\n\t [THEHAVESTER] on $root_domain"
+[ ! -f "$PWD"/theharvester.html ] && theharvester -d "$root_domain" \
+    -b google,bing,censys,rapiddns,securityTrails,dnsdumpster,urlscan \
+    -f "$PWD"/theharvester &>/dev/null ||
+    echo -e "\t Already done. \n"
+
+[ $jump -ne 1 ] &&
+    echo -e "\n\t Probing for active http/https server..." ||
+    echo -e "\n\t Skipping http/https probing [jump=1]..."
+
+[ ! -f "$save_as" ] && cat "$WORKDIR"/* | anew 1>"$save_as"
+
+# Check for webservers on target subdomains
+
+# Check if a test already happened, so the script dont do the whole test again
+MAX=40
+servs_len=$(wc -l "$webservers" | cut -d ' ' -f1)
+if [ -f "$webservers" ] && [ "$servs_len" -ne 0 ] && [ $jump -ne 1 ]; then
+
+    # Here, we aren't getting the last subdomain from $webservers file, because httpx is using
+    # 4000 threads, so many lines are not linear ordered, they all have different response timing
+    # For that reason, we need to get at least 40 subdomains, and test the highest line value
+
+    echo -e "\n\t Detected webservers file for domain $domain, skipping already tested subdomains..."
+
+    len=$(wc -l "$webservers" | cut -d' ' -f1)
+    subs_len=$(wc -l "$save_as" | cut -d' ' -f1)
+    howmany=()
+
+    [ "$len" -lt $MAX ] && stop_in=0 || stop_in=$((len - MAX))
+
+    for ((i = len; i > stop_in; i--)); do
+        subdomain=$(sed -n "$i p" "$webservers" | cut -d' ' -f1 | sed -E 's/^(http|https):\/\///' | cut -d: -f1)
+        line_number=$(cat -n "$save_as" | grep "$subdomain" | xargs | cut -d ' ' -f1 | sed -n '$p')
+        [ -z "$line_number" ] && continue
+
+        howmany+=("$line_number")
+    done
+
+    # Get the highest line on howmany "array"
+    start_from=$(echo "${howmany[@]}" | tr ' ' '\n' | sort -n -r | sed -n '1p')
+    start_from=$((start_from + 1))
+
+    if [ "$start_from" -lt "$subs_len" ]; then
+        echo -e "\n\t Starting from index [$start_from]"
+        mv "$save_as" "$save_as-bkp"
+        sed -n "$start_from,$ p" "$save_as-bkp" >"$save_as"
+    else
+        echo -e "\n\t All subdomains have already been tested, skipping httpx stage..."
+        jump=1
+    fi
+fi
+
+
+run_httpx "$vp_otp\subs_$dname.txt"
+echo -e "\n\t Subdomains \$[$found] found, saved here as webservers_$dname.txt"
+
+# Depois que o httpx roda, é criado uma lista com os subdomínios ativos para screenshoting
+screenshot_subs 
+found=$(wc -l "$webservers" | cut -d ' ' -f1)
+
+if [ $jump_tls_enum -ne 1 ]; then
+    save_new_domainsin="$WORKDIR/subs_$dname-set1"
+    save_discovered_domains="$WORKDIR/new_domains.list"
+
+    if [ ! -f "$save_discovered_domains" ]; then
+        echo -e "\n\t Extracting more domains using amass intel subcommand..."
+        amass_domains=$(amass intel -d "$root_domain" -whois)
+
+        echo -e "\n\t Extracting tls certificate dns names from gowitness.sqlite3..."
+        maybe_domains=$(sqlite3 shots/gowitness.sqlite3 \
+            "select name from tls_certificate_dns_names;" ".exit" | sed 's/^\*\.//g' | anew | tr ' ' '\n' | xargs)
+
+        # START DOMAIN FILTERING
+        good_domains=()
+        echo -e "\n\t Filtering bad domains..."
+        for mb_domain in $maybe_domains; do
+            BAD=0
+            for bd_domain in "${domain_blacklist[@]}"; do
+
+                if [[ "$mb_domain" = *"$bd_domain"* ]]; then
+                    BAD=1
+                    break
+                fi
+            done
+
+            if [ "$BAD" -ne 1 ]; then
+                good_domains+=("$mb_domain")
+            fi
+        done
+        # END DOMAIN FILTERING
+
+        # IN-SCOPE FILTERING
+        echo -e "\n\t Verifying domains registered by $reg_organization or that ends with \".$root_domain\""
+        good_domains_=$(echo "${good_domains[*]}" | tr ' ' '\n')
+        inscope_domains="$(echo -e "$good_domains_ $amass_domains" | anew | dnsx -silent | match_whois "$reg_organization" "$root_domain" | tee -a "$save_discovered_domains")"
+    else
+        echo -e "\n\t Already extracted domains using [amass intel] and tls certificate [gowitness] skipping..."
+        inscope_domains=$(cat "$save_discovered_domains")
+    fi
+
+    found_domains=$(echo "$inscope_domains" | wc -l | cut -d ' ' -f1)
+    echo -e "\n\t Found [$found_domains] new domains!"
+
+    domains_otp=()
+    for domain_san in $(echo "$inscope_domains" | tr '\n' ' ' | xargs); do
+        getSubs "$domain_san"
+        dname_="$(echo "$domain_san" | tr '.' '-')"
+
+        outputs=$(printf "$WORKDIR/%s_$dname_ " "${tools[@]}")
+        domains_otp+=("$outputs")
+    done
+
+    echo -e "\n\t Merging results..."
+    cat "${domains_otp[@]}" >"$save_new_domainsin"
+
+    jump=0
+fi
+
+cp "$webservers" "$PWD/"
+
+echo -e "\n\t Backuping all osint results in /vps_bkp..."
+cp -R "$WORKDIR" /vps_bkp
+cp "$webservers" /vps_bkp
+
+# Activate report server and open in chromium
+gowitness report serve -D shots/gowitness.sqlite3 -P "$PWD/shots" &
+chromium http://localhost:7171
