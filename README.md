@@ -1,1 +1,1 @@
-This script needs modification to get it working on your machine.
+This script needs to be modified to get working properly in your machine.
