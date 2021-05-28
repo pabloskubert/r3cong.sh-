@@ -1,2 +1,1 @@
-# r3cong.sh-
-Progressive agressive-passive reconnaissance tool (SH)
+This script needs modification to get it working on your machine.
